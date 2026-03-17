@@ -7,6 +7,7 @@ import { useEditorStore, type CanvasElement } from "@/store/editor"
 import { CanvasFrames } from "@/components/canvas/canvas-frames"
 import { CanvasElements } from "@/components/canvas/canvas-elements"
 import { normalizeRect } from "@/lib/normalize-rect"
+import { normalizeCircle } from "@/lib/normalize-circle"
 import { findContainingFrame } from "@/lib/find-containing-frame"
 
 const MIN_SCALE = 0.1
@@ -48,10 +49,12 @@ export function CanvasStage() {
     [updateElement]
   )
 
-  // ── Rect drawing refs (no re-renders during drag) ─────────────────────────
+  // ── Drawing refs (no re-renders during drag) ─────────────────────────────
   const isDrawingRef = useRef(false)
   const drawStartRef = useRef({ x: 0, y: 0 })
   const previewRectRef = useRef<Konva.Rect | null>(null)
+  const previewEllipseRef = useRef<Konva.Ellipse | null>(null)
+  const previewLineRef = useRef<Konva.Line | null>(null)
 
   // ── Pan refs (no re-renders during drag) ─────────────────────────────────
   const isPanningRef = useRef(false)
@@ -60,7 +63,8 @@ export function CanvasStage() {
 
   // Panning overlay cursor — null means "use tool-based cursor"
   const [panCursor, setPanCursor] = useState<"grab" | "grabbing" | null>(null)
-  const baseCursor = activeTool === "rect" ? "crosshair" : "default"
+  const DRAW_TOOLS = ["rect", "circle", "line"]
+  const baseCursor = DRAW_TOOLS.includes(activeTool) ? "crosshair" : "default"
   const cursor = panCursor ?? baseCursor
 
   // Fit container size
@@ -119,8 +123,8 @@ export function CanvasStage() {
         return
       }
 
-      // Rect tool: start drawing
-      if (activeTool === "rect") {
+      // Drawing tools: rect, circle, line
+      if (activeTool === "rect" || activeTool === "circle" || activeTool === "line") {
         const stage = stageRef.current
         if (!stage) return
         const pos = stage.getRelativePointerPosition()
@@ -129,20 +133,31 @@ export function CanvasStage() {
         isDrawingRef.current = true
         drawStartRef.current = { x: pos.x, y: pos.y }
 
-        // Spawn a preview rect directly on the layer — bypasses Zustand
         const layer = stage.getLayers()[0]
         if (!layer) return
-        const preview = new Konva.Rect({
-          x: pos.x,
-          y: pos.y,
-          width: 0,
-          height: 0,
-          fill: "#000000",
-          opacity: 0.5,
-          listening: false,
-        })
-        layer.add(preview)
-        previewRectRef.current = preview
+
+        if (activeTool === "rect") {
+          const preview = new Konva.Rect({
+            x: pos.x, y: pos.y, width: 0, height: 0,
+            fill: "#000000", opacity: 0.5, listening: false,
+          })
+          layer.add(preview)
+          previewRectRef.current = preview
+        } else if (activeTool === "circle") {
+          const preview = new Konva.Ellipse({
+            x: pos.x, y: pos.y, radiusX: 0, radiusY: 0,
+            fill: "#000000", opacity: 0.5, listening: false,
+          })
+          layer.add(preview)
+          previewEllipseRef.current = preview
+        } else if (activeTool === "line") {
+          const preview = new Konva.Line({
+            points: [pos.x, pos.y, pos.x, pos.y],
+            stroke: "#000000", strokeWidth: 2, opacity: 0.5, listening: false,
+          })
+          layer.add(preview)
+          previewLineRef.current = preview
+        }
         return
       }
     },
@@ -166,16 +181,28 @@ export function CanvasStage() {
         return
       }
 
-      // Rect preview — direct Konva update, NO Zustand
-      if (isDrawingRef.current && previewRectRef.current) {
+      // Shape previews — direct Konva update, NO Zustand
+      if (isDrawingRef.current) {
         const stage = stageRef.current
         if (!stage) return
         const pos = stage.getRelativePointerPosition()
         if (!pos) return
 
-        const { x, y, width, height } = normalizeRect(drawStartRef.current, pos)
-        previewRectRef.current.setAttrs({ x, y, width, height })
-        previewRectRef.current.getLayer()?.batchDraw()
+        if (previewRectRef.current) {
+          const { x, y, width, height } = normalizeRect(drawStartRef.current, pos)
+          previewRectRef.current.setAttrs({ x, y, width, height })
+          previewRectRef.current.getLayer()?.batchDraw()
+        } else if (previewEllipseRef.current) {
+          const { x, y, radiusX, radiusY } = normalizeCircle(drawStartRef.current, pos)
+          previewEllipseRef.current.setAttrs({ x, y, radiusX, radiusY })
+          previewEllipseRef.current.getLayer()?.batchDraw()
+        } else if (previewLineRef.current) {
+          previewLineRef.current.points([
+            drawStartRef.current.x, drawStartRef.current.y,
+            pos.x, pos.y,
+          ])
+          previewLineRef.current.getLayer()?.batchDraw()
+        }
       }
     },
     []
@@ -194,40 +221,61 @@ export function CanvasStage() {
       return
     }
 
-    // Commit rect to Zustand
-    if (isDrawingRef.current && previewRectRef.current) {
+    // Commit drawing to Zustand
+    if (isDrawingRef.current) {
       isDrawingRef.current = false
-      const preview = previewRectRef.current
-      const { x, y, width, height } = {
-        x: preview.x(),
-        y: preview.y(),
-        width: preview.width(),
-        height: preview.height(),
-      }
-      preview.destroy()
-      previewRectRef.current = null
 
-      // Only commit if it has a meaningful size
-      if (width > 2 && height > 2) {
-        // Assign to a frame if the rect's center falls inside one
-        const cx = x + width / 2
-        const cy = y + height / 2
-        const containingFrame = findContainingFrame(cx, cy, frames)
-        addElement({
-          id: crypto.randomUUID(),
-          type: "rect",
-          frameId: containingFrame?.id ?? null,
-          name: "Rectangle",
-          x,
-          y,
-          rotation: 0,
-          fill: "#000000",
-          stroke: "none",
-          strokeWidth: 0,
-          opacity: 1,
-          width,
-          height,
-        })
+      if (previewRectRef.current) {
+        const preview = previewRectRef.current
+        const x = preview.x(), y = preview.y()
+        const width = preview.width(), height = preview.height()
+        preview.destroy()
+        previewRectRef.current = null
+
+        if (width > 2 && height > 2) {
+          const containingFrame = findContainingFrame(x + width / 2, y + height / 2, frames)
+          addElement({
+            id: crypto.randomUUID(), type: "rect",
+            frameId: containingFrame?.id ?? null, name: "Rectangle",
+            x, y, rotation: 0, fill: "#000000", stroke: "none",
+            strokeWidth: 0, opacity: 1, width, height,
+          })
+        }
+      } else if (previewEllipseRef.current) {
+        const preview = previewEllipseRef.current
+        const x = preview.x(), y = preview.y()
+        const radiusX = preview.radiusX(), radiusY = preview.radiusY()
+        preview.destroy()
+        previewEllipseRef.current = null
+
+        if (radiusX > 1 && radiusY > 1) {
+          const containingFrame = findContainingFrame(x, y, frames)
+          addElement({
+            id: crypto.randomUUID(), type: "circle",
+            frameId: containingFrame?.id ?? null, name: "Ellipse",
+            x, y, rotation: 0, fill: "#000000", stroke: "none",
+            strokeWidth: 0, opacity: 1, radiusX, radiusY,
+          })
+        }
+      } else if (previewLineRef.current) {
+        const preview = previewLineRef.current
+        const points = preview.points()
+        preview.destroy()
+        previewLineRef.current = null
+
+        const dx = (points[2] ?? 0) - (points[0] ?? 0)
+        const dy = (points[3] ?? 0) - (points[1] ?? 0)
+        if (Math.sqrt(dx * dx + dy * dy) > 2) {
+          const mx = ((points[0] ?? 0) + (points[2] ?? 0)) / 2
+          const my = ((points[1] ?? 0) + (points[3] ?? 0)) / 2
+          const containingFrame = findContainingFrame(mx, my, frames)
+          addElement({
+            id: crypto.randomUUID(), type: "line",
+            frameId: containingFrame?.id ?? null, name: "Line",
+            x: 0, y: 0, rotation: 0, fill: "none", stroke: "#000000",
+            strokeWidth: 2, opacity: 1, points,
+          })
+        }
       }
     }
   }, [addElement, frames, setViewport])
