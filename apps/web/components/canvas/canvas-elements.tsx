@@ -8,21 +8,30 @@ import { useEditorStore, type CanvasElement } from "@/store/editor"
 interface CanvasElementsProps {
   onSelect: (id: string) => void
   onTransformEnd: (id: string, attrs: Partial<CanvasElement>) => void
+  onNodeEdit: (id: string) => void
+  onSegmentClick: (id: string, canvasX: number, canvasY: number) => void
+  nodeEditTarget: string | null
   interactive: boolean
 }
 
 function ShapeNode({
   el,
   isSelected,
+  isNodeEditTarget,
   interactive,
   onSelect,
   onTransformEnd,
+  onNodeEdit,
+  onSegmentClick,
 }: {
   el: CanvasElement
   isSelected: boolean
+  isNodeEditTarget: boolean
   interactive: boolean
   onSelect: (id: string) => void
   onTransformEnd: (id: string, attrs: Partial<CanvasElement>) => void
+  onNodeEdit: (id: string) => void
+  onSegmentClick: (id: string, canvasX: number, canvasY: number) => void
 }) {
   const shapeRef = useRef<Konva.Shape>(null)
   const transformerRef = useRef<Konva.Transformer>(null)
@@ -39,6 +48,7 @@ function ShapeNode({
   }, [isSelected])
 
   const commonProps = {
+    id: el.id,
     x: el.x,
     y: el.y,
     rotation: el.rotation,
@@ -48,8 +58,17 @@ function ShapeNode({
     opacity: el.opacity,
     listening: interactive,
     draggable: interactive && isSelected,
-    onClick: () => onSelect(el.id),
+    onClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
+      if (isNodeEditTarget && el.type === "path") {
+        const stage = e.target.getStage()
+        const pos = stage?.getRelativePointerPosition()
+        if (pos) onSegmentClick(el.id, pos.x, pos.y)
+      } else {
+        onSelect(el.id)
+      }
+    },
     onTap: () => onSelect(el.id),
+    onDblClick: () => el.type === "path" ? onNodeEdit(el.id) : undefined,
     onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => {
       onTransformEnd(el.id, { x: e.target.x(), y: e.target.y() })
     },
@@ -133,7 +152,7 @@ function ShapeNode({
   )
 }
 
-export function CanvasElements({ onSelect, onTransformEnd, interactive }: CanvasElementsProps) {
+export function CanvasElements({ onSelect, onTransformEnd, onNodeEdit, onSegmentClick, nodeEditTarget, interactive }: CanvasElementsProps) {
   const elements = useEditorStore((s) => s.elements)
   const selection = useEditorStore((s) => s.selection)
 
@@ -144,8 +163,11 @@ export function CanvasElements({ onSelect, onTransformEnd, interactive }: Canvas
           key={el.id}
           el={el}
           isSelected={selection.includes(el.id)}
+          isNodeEditTarget={nodeEditTarget === el.id}
           interactive={interactive}
           onSelect={onSelect}
+          onNodeEdit={onNodeEdit}
+          onSegmentClick={onSegmentClick}
           onTransformEnd={onTransformEnd}
         />
       ))}

@@ -3,6 +3,8 @@
 import { CanvasStage } from "@/components/canvas/canvas-stage"
 import { BottomToolbar } from "@/components/bottom-toolbar"
 import { TopBar } from "@/components/top-bar"
+import { PropertiesPanel } from "@/components/properties-panel"
+import { LayersPanel } from "@/components/layers-panel"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 
 export function EditorShell() {
@@ -13,21 +15,23 @@ export function EditorShell() {
       <TopBar />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar — layers panel (populated in a later issue) */}
         <aside
           aria-label="Layers"
-          className="w-52 shrink-0 border-r border-border bg-card"
-        />
+          className="w-52 shrink-0 overflow-y-auto border-r border-border bg-card"
+        >
+          <LayersPanel />
+        </aside>
 
         <main className="flex-1 overflow-hidden">
           <CanvasStage />
         </main>
 
-        {/* Right panel — properties (populated in a later issue) */}
         <aside
           aria-label="Properties"
-          className="w-60 shrink-0 border-l border-border bg-card"
-        />
+          className="w-60 shrink-0 overflow-y-auto border-l border-border bg-card"
+        >
+          <PropertiesPanel />
+        </aside>
       </div>
 
       <BottomToolbar />

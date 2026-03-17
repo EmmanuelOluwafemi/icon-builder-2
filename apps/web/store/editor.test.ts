@@ -309,6 +309,16 @@ describe("undo / redo", () => {
     expect(() => useEditorStore.getState().redo()).not.toThrow()
   })
 
+  it("history snapshots are deep clones — mutating current elements does not corrupt history", () => {
+    useEditorStore.getState().addElement(makeRect("r1"))
+    // Snapshot taken; now mutate the current element
+    useEditorStore.getState().updateElement("r1", { x: 999 })
+    // Undo should restore the snapshot with x: 0, not the mutated x: 999
+    useEditorStore.getState().undo()
+    const restored = useEditorStore.getState().elements.find((e) => e.id === "r1")
+    expect(restored?.x ?? 0).toBe(0)
+  })
+
   it("adding an element after undo discards the redo branch", () => {
     useEditorStore.getState().addElement(makeRect("r1"))
     useEditorStore.getState().undo()

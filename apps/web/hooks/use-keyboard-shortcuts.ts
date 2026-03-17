@@ -30,11 +30,20 @@ export function useKeyboardShortcuts() {
   const removeElements = useEditorStore((s) => s.removeElements)
   const elements = useEditorStore((s) => s.elements)
   const addElement = useEditorStore((s) => s.addElement)
+  const nodeEditTarget = useEditorStore((s) => s.nodeEditTarget)
+  const setNodeEditTarget = useEditorStore((s) => s.setNodeEditTarget)
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented || e.repeat) return
       if (isTypingTarget(e.target)) return
+
+      // Escape: exit node edit mode
+      if (e.key === "Escape" && nodeEditTarget) {
+        e.preventDefault()
+        setNodeEditTarget(null)
+        return
+      }
 
       const key = e.key.toLowerCase()
 
@@ -84,5 +93,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [setActiveTool, undo, redo, selection, removeElements, elements, addElement])
+  }, [setActiveTool, undo, redo, selection, removeElements, elements, addElement, nodeEditTarget, setNodeEditTarget])
 }

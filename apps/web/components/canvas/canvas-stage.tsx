@@ -6,14 +6,53 @@ import Konva from "konva"
 import { useEditorStore, type CanvasElement } from "@/store/editor"
 import { CanvasFrames } from "@/components/canvas/canvas-frames"
 import { CanvasElements } from "@/components/canvas/canvas-elements"
+import { NodeEditorOverlay } from "@/components/canvas/node-editor-overlay"
 import { usePenTool } from "@/components/canvas/canvas-pen"
 import { normalizeRect } from "@/lib/normalize-rect"
 import { normalizeCircle } from "@/lib/normalize-circle"
 import { findContainingFrame } from "@/lib/find-containing-frame"
+import { parsePathSegments, serializeSegments, insertAnchorAt, isPathClosed, type Segment } from "@/lib/node-editor-ops"
 
 const MIN_SCALE = 0.1
 const MAX_SCALE = 20
 const ZOOM_SENSITIVITY = 1.05
+
+/** Sample each bezier segment at N steps and return the (segIndex, t) nearest to (px, py). */
+function findNearestBezierPoint(
+  segments: Segment[],
+  px: number,
+  py: number,
+  steps = 20
+): { segIndex: number; t: number } {
+  let bestSeg = 0
+  let bestT = 0.5
+  let bestDist = Infinity
+
+  for (let i = 0; i < segments.length - 1; i++) {
+    const s0 = segments[i]!
+    const s1 = segments[i + 1]!
+    const p0x = s0.point.x, p0y = s0.point.y
+    const p1x = s0.point.x + s0.handleOut.x, p1y = s0.point.y + s0.handleOut.y
+    const p2x = s1.point.x + s1.handleIn.x,  p2y = s1.point.y + s1.handleIn.y
+    const p3x = s1.point.x, p3y = s1.point.y
+
+    for (let step = 0; step <= steps; step++) {
+      const t = step / steps
+      const u = 1 - t
+      const bx = u*u*u*p0x + 3*u*u*t*p1x + 3*u*t*t*p2x + t*t*t*p3x
+      const by = u*u*u*p0y + 3*u*u*t*p1y + 3*u*t*t*p2y + t*t*t*p3y
+      const d = (bx - px) ** 2 + (by - py) ** 2
+      if (d < bestDist) {
+        bestDist = d
+        bestSeg = i
+        bestT = t
+      }
+    }
+  }
+
+  // Clamp t away from endpoints to avoid degenerate zero-length segments
+  return { segIndex: bestSeg, t: Math.max(0.05, Math.min(0.95, bestT)) }
+}
 
 export function CanvasStage() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -27,7 +66,35 @@ export function CanvasStage() {
   const addElement = useEditorStore((s) => s.addElement)
   const updateElement = useEditorStore((s) => s.updateElement)
   const setSelection = useEditorStore((s) => s.setSelection)
+  const setNodeEditTarget = useEditorStore((s) => s.setNodeEditTarget)
+  const nodeEditTarget = useEditorStore((s) => s.nodeEditTarget)
+  const elements = useEditorStore((s) => s.elements)
+  const pushHistory = useEditorStore((s) => s.pushHistory)
   const frames = useEditorStore((s) => s.frames)
+
+  const handleNodeEdit = useCallback(
+    (id: string) => {
+      setNodeEditTarget(id)
+    },
+    [setNodeEditTarget]
+  )
+
+  const handleSegmentClick = useCallback(
+    (id: string, canvasX: number, canvasY: number) => {
+      const el = elements.find((e) => e.id === id)
+      if (!el || el.type !== "path") return
+      const segs = parsePathSegments(el.d)
+      const closed = isPathClosed(el.d)
+      if (segs.length < 2) return
+
+      // Find the segment index and t-parameter closest to the click point
+      const { segIndex, t } = findNearestBezierPoint(segs, canvasX, canvasY)
+      const newSegs = insertAnchorAt(segs, segIndex, t)
+      updateElement(id, { d: serializeSegments(newSegs, closed) })
+      pushHistory()
+    },
+    [elements, updateElement, pushHistory]
+  )
 
   const handleFrameDragEnd = useCallback(
     (id: string, x: number, y: number) => {
@@ -410,11 +477,16 @@ export function CanvasStage() {
             <CanvasElements
               onSelect={handleElementSelect}
               onTransformEnd={handleTransformEnd}
+              onNodeEdit={handleNodeEdit}
+              onSegmentClick={handleSegmentClick}
+              nodeEditTarget={nodeEditTarget}
               interactive={activeTool === "select"}
             />
           </Layer>
         </Stage>
       )}
+
+      <NodeEditorOverlay stageRef={stageRef} />
 
       {/* Zoom indicator */}
       <div className="absolute bottom-4 right-4 rounded-md bg-card px-2 py-1 text-xs text-muted-foreground shadow-sm border border-border">
