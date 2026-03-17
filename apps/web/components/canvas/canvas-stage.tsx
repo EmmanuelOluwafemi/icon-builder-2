@@ -6,6 +6,7 @@ import Konva from "konva"
 import { useEditorStore, type CanvasElement } from "@/store/editor"
 import { CanvasFrames } from "@/components/canvas/canvas-frames"
 import { CanvasElements } from "@/components/canvas/canvas-elements"
+import { usePenTool } from "@/components/canvas/canvas-pen"
 import { normalizeRect } from "@/lib/normalize-rect"
 import { normalizeCircle } from "@/lib/normalize-circle"
 import { findContainingFrame } from "@/lib/find-containing-frame"
@@ -63,7 +64,9 @@ export function CanvasStage() {
 
   // Panning overlay cursor — null means "use tool-based cursor"
   const [panCursor, setPanCursor] = useState<"grab" | "grabbing" | null>(null)
-  const DRAW_TOOLS = ["rect", "circle", "line"]
+  const penHandlers = usePenTool({ stageRef })
+
+  const DRAW_TOOLS = ["rect", "circle", "line", "pen"]
   const baseCursor = DRAW_TOOLS.includes(activeTool) ? "crosshair" : "default"
   const cursor = panCursor ?? baseCursor
 
@@ -120,6 +123,12 @@ export function CanvasStage() {
         isPanningRef.current = true
         setPanCursor("grabbing")
         lastPointerRef.current = { x: e.evt.clientX, y: e.evt.clientY }
+        return
+      }
+
+      // Pen tool — delegate entirely to usePenTool
+      if (activeTool === "pen") {
+        penHandlers.handleMouseDown(e)
         return
       }
 
@@ -181,6 +190,12 @@ export function CanvasStage() {
         return
       }
 
+      // Pen tool mousemove
+      if (activeTool === "pen") {
+        penHandlers.handleMouseMove(e)
+        return
+      }
+
       // Shape previews — direct Konva update, NO Zustand
       if (isDrawingRef.current) {
         const stage = stageRef.current
@@ -208,7 +223,7 @@ export function CanvasStage() {
     []
   )
 
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     // Commit pan to Zustand
     if (isPanningRef.current) {
       isPanningRef.current = false
@@ -218,6 +233,12 @@ export function CanvasStage() {
       if (stage) {
         setViewport({ x: stage.x(), y: stage.y() })
       }
+      return
+    }
+
+    // Pen tool mouseup
+    if (activeTool === "pen") {
+      penHandlers.handleMouseUp(e)
       return
     }
 
@@ -278,7 +299,7 @@ export function CanvasStage() {
         }
       }
     }
-  }, [addElement, frames, setViewport])
+  }, [activeTool, addElement, frames, penHandlers, setViewport])
 
   // ── Zoom handler ──────────────────────────────────────────────────────────
   const handleWheel = useCallback(
