@@ -22,4 +22,9 @@ describe("TopBar", () => {
     render(<TopBar />)
     expect(screen.getByRole("button", { name: /export/i })).toBeInTheDocument()
   })
+
+  it("has a New Frame trigger button", () => {
+    render(<TopBar />)
+    expect(screen.getByRole("button", { name: /new frame/i })).toBeInTheDocument()
+  })
 })

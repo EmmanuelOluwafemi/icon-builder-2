@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Stage, Layer, Rect } from "react-konva"
 import type Konva from "konva"
 import { useEditorStore } from "@/store/editor"
+import { CanvasFrames } from "@/components/canvas/canvas-frames"
 
 const MIN_SCALE = 0.1
 const MAX_SCALE = 20
@@ -17,6 +18,14 @@ export function CanvasStage() {
   const viewport = useEditorStore((s) => s.viewport)
   const setViewport = useEditorStore((s) => s.setViewport)
   const activeTool = useEditorStore((s) => s.activeTool)
+  const updateFrame = useEditorStore((s) => s.updateFrame)
+
+  const handleFrameDragEnd = useCallback(
+    (id: string, x: number, y: number) => {
+      updateFrame(id, { x, y })
+    },
+    [updateFrame]
+  )
 
   // Refs for pan math (no re-renders during drag)
   const isPanningRef = useRef(false)
@@ -213,6 +222,7 @@ export function CanvasStage() {
               fill="transparent"
               listening={false}
             />
+            <CanvasFrames onFrameDragEnd={handleFrameDragEnd} />
           </Layer>
         </Stage>
       )}

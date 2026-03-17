@@ -2,11 +2,15 @@
 
 import { UndoIcon, RedoIcon, Share01Icon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
+import { NewFrameDialog } from "@/components/new-frame-dialog"
 
 export function TopBar() {
   return (
     <header className="flex h-11 items-center justify-between border-b border-border bg-card px-3">
-      <span className="text-sm font-medium text-foreground">Icon Builder</span>
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium text-foreground">Icon Builder</span>
+        <NewFrameDialog />
+      </div>
 
       <div className="flex items-center gap-1">
         <button
