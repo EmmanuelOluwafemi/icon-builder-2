@@ -6,9 +6,10 @@ import { useEditorStore } from "@/store/editor"
 
 interface CanvasFramesProps {
   onFrameDragEnd: (id: string, x: number, y: number) => void
+  interactive: boolean
 }
 
-export function CanvasFrames({ onFrameDragEnd }: CanvasFramesProps) {
+export function CanvasFrames({ onFrameDragEnd, interactive }: CanvasFramesProps) {
   const frames = useEditorStore((s) => s.frames)
 
   return (
@@ -18,7 +19,8 @@ export function CanvasFrames({ onFrameDragEnd }: CanvasFramesProps) {
           key={frame.id}
           x={frame.x}
           y={frame.y}
-          draggable
+          draggable={interactive}
+          listening={interactive}
           onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
             onFrameDragEnd(frame.id, e.target.x(), e.target.y())
           }}

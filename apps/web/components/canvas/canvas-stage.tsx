@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Stage, Layer, Rect } from "react-konva"
-import type Konva from "konva"
-import { useEditorStore } from "@/store/editor"
+import Konva from "konva"
+import { useEditorStore, type CanvasElement } from "@/store/editor"
 import { CanvasFrames } from "@/components/canvas/canvas-frames"
+import { CanvasElements } from "@/components/canvas/canvas-elements"
+import { normalizeRect } from "@/lib/normalize-rect"
+import { findContainingFrame } from "@/lib/find-containing-frame"
 
 const MIN_SCALE = 0.1
 const MAX_SCALE = 20
@@ -19,6 +22,10 @@ export function CanvasStage() {
   const setViewport = useEditorStore((s) => s.setViewport)
   const activeTool = useEditorStore((s) => s.activeTool)
   const updateFrame = useEditorStore((s) => s.updateFrame)
+  const addElement = useEditorStore((s) => s.addElement)
+  const updateElement = useEditorStore((s) => s.updateElement)
+  const setSelection = useEditorStore((s) => s.setSelection)
+  const frames = useEditorStore((s) => s.frames)
 
   const handleFrameDragEnd = useCallback(
     (id: string, x: number, y: number) => {
@@ -27,13 +34,34 @@ export function CanvasStage() {
     [updateFrame]
   )
 
-  // Refs for pan math (no re-renders during drag)
+  const handleElementSelect = useCallback(
+    (id: string) => {
+      setSelection([id])
+    },
+    [setSelection]
+  )
+
+  const handleTransformEnd = useCallback(
+    (id: string, attrs: Partial<CanvasElement>) => {
+      updateElement(id, attrs)
+    },
+    [updateElement]
+  )
+
+  // ── Rect drawing refs (no re-renders during drag) ─────────────────────────
+  const isDrawingRef = useRef(false)
+  const drawStartRef = useRef({ x: 0, y: 0 })
+  const previewRectRef = useRef<Konva.Rect | null>(null)
+
+  // ── Pan refs (no re-renders during drag) ─────────────────────────────────
   const isPanningRef = useRef(false)
   const isSpaceRef = useRef(false)
   const lastPointerRef = useRef({ x: 0, y: 0 })
 
-  // State for cursor — must be state since it drives render
-  const [cursor, setCursor] = useState<"default" | "grab" | "grabbing">("default")
+  // Panning overlay cursor — null means "use tool-based cursor"
+  const [panCursor, setPanCursor] = useState<"grab" | "grabbing" | null>(null)
+  const baseCursor = activeTool === "rect" ? "crosshair" : "default"
+  const cursor = panCursor ?? baseCursor
 
   // Fit container size
   useEffect(() => {
@@ -61,14 +89,14 @@ export function CanvasStage() {
           return
         e.preventDefault()
         isSpaceRef.current = true
-        setCursor("grab")
+        setPanCursor("grab")
       }
     }
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         isSpaceRef.current = false
         isPanningRef.current = false
-        setCursor("default")
+        setPanCursor(null)
       }
     }
     window.addEventListener("keydown", onKeyDown)
@@ -77,18 +105,45 @@ export function CanvasStage() {
       window.removeEventListener("keydown", onKeyDown)
       window.removeEventListener("keyup", onKeyUp)
     }
-  }, [])
+  }, [activeTool])
 
-  // ── Pan handlers ──────────────────────────────────────────────────────────
+  // ── Mouse handlers ────────────────────────────────────────────────────────
+
   const handleMouseDown = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
+      // Pan: space + drag, or zoom tool
       if (isSpaceRef.current || activeTool === "zoom") {
         isPanningRef.current = true
-        setCursor("grabbing")
-        lastPointerRef.current = {
-          x: e.evt.clientX,
-          y: e.evt.clientY,
-        }
+        setPanCursor("grabbing")
+        lastPointerRef.current = { x: e.evt.clientX, y: e.evt.clientY }
+        return
+      }
+
+      // Rect tool: start drawing
+      if (activeTool === "rect") {
+        const stage = stageRef.current
+        if (!stage) return
+        const pos = stage.getRelativePointerPosition()
+        if (!pos) return
+
+        isDrawingRef.current = true
+        drawStartRef.current = { x: pos.x, y: pos.y }
+
+        // Spawn a preview rect directly on the layer — bypasses Zustand
+        const layer = stage.getLayers()[0]
+        if (!layer) return
+        const preview = new Konva.Rect({
+          x: pos.x,
+          y: pos.y,
+          width: 0,
+          height: 0,
+          fill: "#000000",
+          opacity: 0.5,
+          listening: false,
+        })
+        layer.add(preview)
+        previewRectRef.current = preview
+        return
       }
     },
     [activeTool]
@@ -96,33 +151,86 @@ export function CanvasStage() {
 
   const handleMouseMove = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
-      if (!isPanningRef.current) return
-      const dx = e.evt.clientX - lastPointerRef.current.x
-      const dy = e.evt.clientY - lastPointerRef.current.y
-      lastPointerRef.current = { x: e.evt.clientX, y: e.evt.clientY }
+      // Pan move
+      if (isPanningRef.current) {
+        const dx = e.evt.clientX - lastPointerRef.current.x
+        const dy = e.evt.clientY - lastPointerRef.current.y
+        lastPointerRef.current = { x: e.evt.clientX, y: e.evt.clientY }
 
-      // Directly update stage — bypass Zustand during drag
-      const stage = stageRef.current
-      if (stage) {
-        stage.x(stage.x() + dx)
-        stage.y(stage.y() + dy)
-        stage.batchDraw()
+        const stage = stageRef.current
+        if (stage) {
+          stage.x(stage.x() + dx)
+          stage.y(stage.y() + dy)
+          stage.batchDraw()
+        }
+        return
+      }
+
+      // Rect preview — direct Konva update, NO Zustand
+      if (isDrawingRef.current && previewRectRef.current) {
+        const stage = stageRef.current
+        if (!stage) return
+        const pos = stage.getRelativePointerPosition()
+        if (!pos) return
+
+        const { x, y, width, height } = normalizeRect(drawStartRef.current, pos)
+        previewRectRef.current.setAttrs({ x, y, width, height })
+        previewRectRef.current.getLayer()?.batchDraw()
       }
     },
     []
   )
 
   const handleMouseUp = useCallback(() => {
-    if (!isPanningRef.current) return
-    isPanningRef.current = false
-    setCursor(isSpaceRef.current ? "grab" : "default")
+    // Commit pan to Zustand
+    if (isPanningRef.current) {
+      isPanningRef.current = false
+      setPanCursor(isSpaceRef.current ? "grab" : null)
 
-    // Commit final position to Zustand on mouseup only
-    const stage = stageRef.current
-    if (stage) {
-      setViewport({ x: stage.x(), y: stage.y() })
+      const stage = stageRef.current
+      if (stage) {
+        setViewport({ x: stage.x(), y: stage.y() })
+      }
+      return
     }
-  }, [setViewport])
+
+    // Commit rect to Zustand
+    if (isDrawingRef.current && previewRectRef.current) {
+      isDrawingRef.current = false
+      const preview = previewRectRef.current
+      const { x, y, width, height } = {
+        x: preview.x(),
+        y: preview.y(),
+        width: preview.width(),
+        height: preview.height(),
+      }
+      preview.destroy()
+      previewRectRef.current = null
+
+      // Only commit if it has a meaningful size
+      if (width > 2 && height > 2) {
+        // Assign to a frame if the rect's center falls inside one
+        const cx = x + width / 2
+        const cy = y + height / 2
+        const containingFrame = findContainingFrame(cx, cy, frames)
+        addElement({
+          id: crypto.randomUUID(),
+          type: "rect",
+          frameId: containingFrame?.id ?? null,
+          name: "Rectangle",
+          x,
+          y,
+          rotation: 0,
+          fill: "#000000",
+          stroke: "none",
+          strokeWidth: 0,
+          opacity: 1,
+          width,
+          height,
+        })
+      }
+    }
+  }, [addElement, frames, setViewport])
 
   // ── Zoom handler ──────────────────────────────────────────────────────────
   const handleWheel = useCallback(
@@ -141,7 +249,6 @@ export function CanvasStage() {
         Math.max(MIN_SCALE, direction > 0 ? oldScale * ZOOM_SENSITIVITY : oldScale / ZOOM_SENSITIVITY)
       )
 
-      // Zoom toward the cursor position
       const mousePointTo = {
         x: (pointer.x - stage.x()) / oldScale,
         y: (pointer.y - stage.y()) / oldScale,
@@ -149,12 +256,10 @@ export function CanvasStage() {
       const newX = pointer.x - mousePointTo.x * newScale
       const newY = pointer.y - mousePointTo.y * newScale
 
-      // Direct update during wheel — no Zustand
       stage.scale({ x: newScale, y: newScale })
       stage.position({ x: newX, y: newY })
       stage.batchDraw()
 
-      // Commit to Zustand after zoom settles
       setViewport({ x: newX, y: newY, scale: newScale })
     },
     [setViewport]
@@ -163,32 +268,39 @@ export function CanvasStage() {
   // Zoom tool: click to zoom in, alt+click to zoom out
   const handleClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
-      if (activeTool !== "zoom") return
-      const stage = stageRef.current
-      if (!stage) return
+      if (activeTool === "zoom") {
+        const stage = stageRef.current
+        if (!stage) return
 
-      const direction = e.evt.altKey ? -1 : 1
-      const oldScale = stage.scaleX()
-      const pointer = stage.getPointerPosition()
-      if (!pointer) return
+        const direction = e.evt.altKey ? -1 : 1
+        const oldScale = stage.scaleX()
+        const pointer = stage.getPointerPosition()
+        if (!pointer) return
 
-      const newScale = Math.min(
-        MAX_SCALE,
-        Math.max(MIN_SCALE, direction > 0 ? oldScale * 1.3 : oldScale / 1.3)
-      )
-      const mousePointTo = {
-        x: (pointer.x - stage.x()) / oldScale,
-        y: (pointer.y - stage.y()) / oldScale,
+        const newScale = Math.min(
+          MAX_SCALE,
+          Math.max(MIN_SCALE, direction > 0 ? oldScale * 1.3 : oldScale / 1.3)
+        )
+        const mousePointTo = {
+          x: (pointer.x - stage.x()) / oldScale,
+          y: (pointer.y - stage.y()) / oldScale,
+        }
+        const newX = pointer.x - mousePointTo.x * newScale
+        const newY = pointer.y - mousePointTo.y * newScale
+
+        stage.scale({ x: newScale, y: newScale })
+        stage.position({ x: newX, y: newY })
+        stage.batchDraw()
+        setViewport({ x: newX, y: newY, scale: newScale })
+        return
       }
-      const newX = pointer.x - mousePointTo.x * newScale
-      const newY = pointer.y - mousePointTo.y * newScale
 
-      stage.scale({ x: newScale, y: newScale })
-      stage.position({ x: newX, y: newY })
-      stage.batchDraw()
-      setViewport({ x: newX, y: newY, scale: newScale })
+      // Select tool: click on empty canvas → clear selection
+      if (activeTool === "select" && e.target === stageRef.current) {
+        setSelection([])
+      }
     },
-    [activeTool, setViewport]
+    [activeTool, setSelection, setViewport]
   )
 
   return (
@@ -213,7 +325,7 @@ export function CanvasStage() {
           onClick={handleClick}
         >
           <Layer>
-            {/* Canvas grid placeholder — elements rendered in later issues */}
+            {/* Hit area for empty-canvas click detection */}
             <Rect
               x={-5000}
               y={-5000}
@@ -222,7 +334,15 @@ export function CanvasStage() {
               fill="transparent"
               listening={false}
             />
-            <CanvasFrames onFrameDragEnd={handleFrameDragEnd} />
+            <CanvasFrames
+              onFrameDragEnd={handleFrameDragEnd}
+              interactive={activeTool === "select"}
+            />
+            <CanvasElements
+              onSelect={handleElementSelect}
+              onTransformEnd={handleTransformEnd}
+              interactive={activeTool === "select"}
+            />
           </Layer>
         </Stage>
       )}

@@ -24,8 +24,8 @@ describe("BottomToolbar", () => {
     render(<BottomToolbar />)
     expect(screen.getByRole("button", { name: /select/i })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /pen/i })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /rect/i })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /circle/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /rectangle/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /ellipse/i })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /line/i })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /zoom/i })).toBeInTheDocument()
   })
@@ -39,8 +39,8 @@ describe("BottomToolbar", () => {
   it("clicking each tool button selects the correct tool", async () => {
     render(<BottomToolbar />)
     const cases: [RegExp, string][] = [
-      [/rect/i, "rect"],
-      [/circle/i, "circle"],
+      [/rectangle/i, "rect"],
+      [/ellipse/i, "circle"],
       [/line/i, "line"],
       [/zoom/i, "zoom"],
       [/select/i, "select"],
@@ -60,7 +60,7 @@ describe("BottomToolbar", () => {
   it("inactive tool buttons have aria-pressed=false", () => {
     useEditorStore.setState({ activeTool: "pen" })
     render(<BottomToolbar />)
-    const inactiveButtons = ["select", "rect", "circle", "line", "zoom"]
+    const inactiveButtons = ["select", "rectangle", "ellipse", "line", "zoom"]
     inactiveButtons.forEach((name) => {
       expect(screen.getByRole("button", { name: new RegExp(name, "i") })).toHaveAttribute(
         "aria-pressed",
@@ -72,8 +72,8 @@ describe("BottomToolbar", () => {
   it("aria-pressed updates when the store activeTool changes", async () => {
     render(<BottomToolbar />)
     expect(screen.getByRole("button", { name: /select/i })).toHaveAttribute("aria-pressed", "true")
-    await userEvent.click(screen.getByRole("button", { name: /rect/i }))
+    await userEvent.click(screen.getByRole("button", { name: /rectangle/i }))
     expect(screen.getByRole("button", { name: /select/i })).toHaveAttribute("aria-pressed", "false")
-    expect(screen.getByRole("button", { name: /rect/i })).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByRole("button", { name: /rectangle/i })).toHaveAttribute("aria-pressed", "true")
   })
 })
